@@ -17,8 +17,11 @@ function duration(seconds: number) {
 
 function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; boxRoutes?: BoxRouteResponse }) {
   const [view, setView] = useState(DEFAULT_VIEW);
+  const [layer, setLayer] = useState<"minimap" | "schematic">(map.minimap_url ? "minimap" : "schematic");
   const [routeTeam, setRouteTeam] = useState<BoxRoute["team"] | null>(null);
-  const route = boxRoutes?.routes.find((r) => r.team === routeTeam);
+  const showMinimap = layer === "minimap" && !!map.minimap_url;
+  // Crate positions are schematic, so box routes only make sense on the schematic layer.
+  const route = showMinimap ? undefined : boxRoutes?.routes.find((r) => r.team === routeTeam);
   const routePath = route
     ? [`M50 ${BASE_Y[route.team]}`, ...route.stops.map((s) => `L${s.x * 100} ${s.y * 100}`), `L50 ${BASE_Y[route.team]}`].join(" ")
     : null;
@@ -44,7 +47,25 @@ function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; box
           </span>
         </p>
         <div className="flex flex-wrap gap-2">
-          {boxRoutes && (
+          {map.minimap_url && (
+            <div className="flex rounded-md border p-0.5" role="group" aria-label="Map layer">
+              {(["minimap", "schematic"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  aria-pressed={layer === option}
+                  onClick={() => setLayer(option)}
+                  className={cn(
+                    "rounded px-2.5 py-1 text-xs capitalize transition-colors",
+                    layer === option ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
+          {boxRoutes && !showMinimap && (
             <div className="flex rounded-md border p-0.5" role="group" aria-label="Optimal box route">
               {(["amber", "sapphire"] as const).map((team) => (
                 <button
@@ -98,7 +119,7 @@ function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; box
           setDragging(false);
         }}
         role="img"
-        aria-label={`Schematic match map at ${Math.round(t)} minutes: ${kills.length} kills, amber ${tally.amber}, sapphire ${tally.sapphire}.${route ? ` Showing the optimal ${route.team} box route through ${route.stops.length} crates.` : ""} Drag to rotate.`}
+        aria-label={`${showMinimap ? "Minimap" : "Schematic"} match map at ${Math.round(t)} minutes: ${kills.length} kills, amber ${tally.amber}, sapphire ${tally.sapphire}.${route ? ` Showing the optimal ${route.team} box route through ${route.stops.length} crates.` : ""} Drag to rotate.`}
       >
         <div
           className="size-full transition-transform duration-300 ease-out"
@@ -120,21 +141,26 @@ function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; box
             </defs>
 
             <rect width="100" height="100" rx="4" fill="#111113" stroke="rgba(255,255,255,0.1)" strokeWidth="0.4" />
-            <rect width="100" height="100" rx="4" fill="url(#map-grid)" />
-            <rect x="0" y="50" width="100" height="50" rx="4" fill={TEAM_COLOR.amber} opacity="0.035" />
-            <rect x="0" y="0" width="100" height="50" rx="4" fill={TEAM_COLOR.sapphire} opacity="0.035" />
-            <line x1="2" y1="50" x2="98" y2="50" stroke="rgba(255,255,255,0.12)" strokeDasharray="1.5 1.5" strokeWidth="0.3" />
-
-            {LANES.map((x) => (
-              <path
-                key={x}
-                d={`M50 92 C ${x} 80, ${x} 70, ${x} 50 S ${x} 20, 50 8`}
-                fill="none"
-                stroke="rgba(255,255,255,0.09)"
-                strokeWidth="3.2"
-                strokeLinecap="round"
-              />
-            ))}
+            {showMinimap ? (
+              <image href={map.minimap_url ?? undefined} width="100" height="100" preserveAspectRatio="none" />
+            ) : (
+              <>
+                <rect width="100" height="100" rx="4" fill="url(#map-grid)" />
+                <rect x="0" y="50" width="100" height="50" rx="4" fill={TEAM_COLOR.amber} opacity="0.035" />
+                <rect x="0" y="0" width="100" height="50" rx="4" fill={TEAM_COLOR.sapphire} opacity="0.035" />
+                <line x1="2" y1="50" x2="98" y2="50" stroke="rgba(255,255,255,0.12)" strokeDasharray="1.5 1.5" strokeWidth="0.3" />
+                {LANES.map((x) => (
+                  <path
+                    key={x}
+                    d={`M50 92 C ${x} 80, ${x} 70, ${x} 50 S ${x} 20, 50 8`}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.09)"
+                    strokeWidth="3.2"
+                    strokeLinecap="round"
+                  />
+                ))}
+              </>
+            )}
 
             {map.objectives.map((o) => {
               const down = o.destroyed_at !== null && o.destroyed_at <= t;
@@ -167,7 +193,7 @@ function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; box
               );
             })}
 
-            {boxRoutes?.crates.map((c) => {
+            {!showMinimap && boxRoutes?.crates.map((c) => {
               const spawned = t >= c.spawn_min;
               const onRoute = route?.stops.some((s) => s.crate_id === c.id);
               return (
@@ -255,7 +281,7 @@ function MatchMap({ map, t, boxRoutes }: { map: MatchMapResponse; t: number; box
       <p className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span>Dots: kills, colored by the team that got them</span>
         <span>Diamonds: Guardians, Walkers, Patron</span>
-        {boxRoutes && <span>Squares: breakable crates, filled once spawned</span>}
+        {boxRoutes && !showMinimap && <span>Squares: breakable crates, filled once spawned</span>}
         <TeamLabel team="amber" />
         <TeamLabel team="sapphire" />
       </p>

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 import respx
 from httpx import Response
@@ -14,6 +16,35 @@ MOCK_DL_HERO_STATS = [
     {"hero_id": 1, "wins": 520, "losses": 480, "matches": 1000},
     {"hero_id": 2, "wins": 450, "losses": 550, "matches": 1000},
     {"hero_id": 3, "wins": 600, "losses": 400, "matches": 1000},
+]
+
+# Same heroes the patch before the current one: Infernus up 4pp, Seven down 5pp, Vindicta flat.
+MOCK_DL_HERO_STATS_PREVIOUS = [
+    {"hero_id": 1, "wins": 480, "losses": 520, "matches": 1000},
+    {"hero_id": 2, "wins": 500, "losses": 500, "matches": 1000},
+    {"hero_id": 3, "wins": 600, "losses": 400, "matches": 1000},
+]
+
+CURRENT_PATCH_START = int(datetime.fromisoformat("2026-10-30T20:51:49Z").timestamp())
+
+
+def _patch(title, pub_date, post_id, source="steam"):
+    link = f"https://store.steampowered.com/news/app/1422450/view/{post_id}"
+    return {
+        "source": source,
+        "title": title,
+        "pub_date": pub_date,
+        "link": link,
+        "guid": {"is_perma_link": True, "text": link},
+        "content": f'<p class="bb_paragraph">{title} &amp; <b>more</b> changes.</p>',
+    }
+
+
+MOCK_DL_PATCHES = [
+    _patch("Big Gameplay Update", "2026-10-30T20:51:49Z", 300),
+    _patch(" Minor Update - 10-14-2026", "2026-10-15T03:11:00Z", 200),
+    _patch("Employee Spotlight", "2026-10-13T20:59:00Z", 100),
+    _patch("09-29-2026", "2026-10-15T03:12:00Z", 150, source="forum"),
 ]
 
 MOCK_DL_ITEMS = [
@@ -57,6 +88,52 @@ MOCK_DL_MATCH_HISTORY = [
 
 MOCK_DL_RANK = {"badge": 93, "rank": 9, "subrank": 3, "last_match": None}
 
+# Hero 1 builds: a 65% win rate over 100 games must rank below 60% over 2000 once Wilson-adjusted.
+MOCK_DL_BUILD_STATS = [
+    {"hero_id": 1, "hero_build_id": 10, "wins": 65, "losses": 35, "matches": 100},
+    {"hero_id": 1, "hero_build_id": 11, "wins": 1200, "losses": 800, "matches": 2000},
+    {"hero_id": 1, "hero_build_id": 12, "wins": 520, "losses": 480, "matches": 1000},
+    {"hero_id": 1, "hero_build_id": 13, "wins": 400, "losses": 600, "matches": 1000},
+]
+MOCK_DL_BUILD_STATS_ETERNUS = [
+    {"hero_id": 1, "hero_build_id": 12, "wins": 700, "losses": 300, "matches": 1000},
+]
+
+MOCK_DL_BUILD = {
+    "hero_build": {
+        "hero_id": 1,
+        "hero_build_id": 11,
+        "author_account_id": 777,
+        "name": "Test Build",
+        "details": {
+            "mod_categories": [
+                {"name": "Early", "mods": [{"ability_id": 1001}, {"ability_id": 1002}]},
+                {"name": "Core", "mods": [{"ability_id": 1002}, {"ability_id": 424242}]},
+            ]
+        },
+    }
+}
+
+MOCK_DL_MAP = {
+    "images": {"minimap": "https://assets.example/minimap.png"},
+    "objective_positions": {
+        "team0_titan": {"left_relative": 0.3905, "top_relative": 0.8236},
+        "team1_titan": {"left_relative": 0.5095, "top_relative": 0.0757},
+        "team0_tier2_1": {"left_relative": 0.1583, "top_relative": 0.6702},
+        "team0_tier2_3": {"left_relative": 0.3901, "top_relative": 0.6115},
+        "team0_tier2_4": {"left_relative": 0.7117, "top_relative": 0.6853},
+        "team1_tier2_1": {"left_relative": 0.1981, "top_relative": 0.2164},
+        "team1_tier2_3": {"left_relative": 0.5099, "top_relative": 0.2885},
+        "team1_tier2_4": {"left_relative": 0.7497, "top_relative": 0.2279},
+        "team0_tier1_1": {"left_relative": 0.069, "top_relative": 0.5363},
+        "team0_tier1_3": {"left_relative": 0.45, "top_relative": 0.5333},
+        "team0_tier1_4": {"left_relative": 0.7774, "top_relative": 0.5423},
+        "team1_tier1_1": {"left_relative": 0.1226, "top_relative": 0.3577},
+        "team1_tier1_3": {"left_relative": 0.45, "top_relative": 0.3667},
+        "team1_tier1_4": {"left_relative": 0.828, "top_relative": 0.3637},
+    },
+}
+
 MOCK_DL_LEADERBOARD = [
     {
         "account_name": f"Player{i}",
@@ -92,8 +169,31 @@ def deadlock_api():
         router.get("https://api.deadlock-api.com/v1/assets/heroes").mock(
             return_value=Response(200, json=MOCK_DL_HEROES)
         )
+        router.get("https://api.deadlock-api.com/v1/assets/map").mock(
+            return_value=Response(200, json=MOCK_DL_MAP)
+        )
+        router.get("https://api.deadlock-api.com/v2/patches").mock(
+            return_value=Response(200, json=MOCK_DL_PATCHES)
+        )
+        router.get(
+            "https://api.deadlock-api.com/v1/analytics/hero-stats",
+            params={"max_unix_timestamp": str(CURRENT_PATCH_START)},
+        ).mock(return_value=Response(200, json=MOCK_DL_HERO_STATS_PREVIOUS))
         router.get("https://api.deadlock-api.com/v1/analytics/hero-stats").mock(
             return_value=Response(200, json=MOCK_DL_HERO_STATS)
+        )
+        router.get(
+            url__regex=r"https://api\.deadlock-api\.com/v1/analytics/hero-build-stats/\d+",
+            params={"min_average_badge": "110"},
+        ).mock(return_value=Response(200, json=MOCK_DL_BUILD_STATS_ETERNUS))
+        router.get(
+            url__regex=r"https://api\.deadlock-api\.com/v1/analytics/hero-build-stats/\d+"
+        ).mock(return_value=Response(200, json=MOCK_DL_BUILD_STATS))
+        router.get("https://api.deadlock-api.com/v1/builds").mock(
+            return_value=Response(200, json=[MOCK_DL_BUILD])
+        )
+        router.get("https://api.deadlock-api.com/v1/players/steam").mock(
+            return_value=Response(200, json=[{"account_id": 777, "personaname": "BuildAuthor"}])
         )
         router.get("https://api.deadlock-api.com/v1/assets/items/by-type/upgrade").mock(
             return_value=Response(200, json=MOCK_DL_ITEMS)

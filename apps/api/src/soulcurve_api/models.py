@@ -65,6 +65,7 @@ class ItemsResponse(BaseModel):
 
 class Build(BaseModel):
     build_id: int
+    name: str
     author: str
     items: list[str]
     win_rate: float
@@ -136,6 +137,7 @@ class NewsItem(BaseModel):
     date: str
     tag: Literal["patch-notes", "news"]
     summary: str
+    url: str | None = None
 
 
 class NewsResponse(BaseModel):
@@ -200,6 +202,7 @@ class MapObjective(BaseModel):
 
 class MatchMapResponse(BaseModel):
     match_id: int
+    minimap_url: str | None = None
     kills: list[MapKill]
     objectives: list[MapObjective]
 

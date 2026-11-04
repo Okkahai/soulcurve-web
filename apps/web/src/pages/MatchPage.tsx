@@ -275,7 +275,7 @@ function MatchPage() {
           <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
             <Section
               title="Match Map"
-              description="Schematic map, follows the replay above · drag to rotate · toggle a team's optimal box route"
+              description="Real minimap, follows the replay above · drag to rotate · switch to the schematic to see a team's optimal box route"
             >
               {map.error && <ErrorState message={map.error} />}
               {!map.data && !map.error && <LoadingState label="Loading map…" variant="rows" />}

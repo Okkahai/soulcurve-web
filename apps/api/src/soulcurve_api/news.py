@@ -1,30 +1,30 @@
 """News / patch notes feed.
 
-Will be replaced with a real content source in M4+ (an admin-authored feed,
-or a scraper over Deadlock's own patch notes); for now it returns fixed
-mock data shaped like the real contract, newest first.
+Valve's Steam announcements come live from deadlock-api's patch feed; SoulCurve's
+own announcements are fixed entries. Newest first.
 """
 
+import html
+import re
+
+import httpx
 from fastapi import APIRouter
 
+from soulcurve_api import deadlock_client
 from soulcurve_api.models import NewsItem, NewsResponse
 
 router = APIRouter()
 
-_MOCK_NEWS: list[NewsItem] = [
+NEWS_COUNT = 15
+SUMMARY_CHARS = 220
+
+_SOULCURVE_NEWS: list[NewsItem] = [
     NewsItem(
-        id=3,
+        id=2,
         title="SoulCurve match analysis is live",
         date="2026-09-27",
         tag="news",
         summary="See your win-probability curve and a 10-point mistake score for any match.",
-    ),
-    NewsItem(
-        id=2,
-        title="Patch mock-patch-1.0: hero balance pass",
-        date="2026-09-20",
-        tag="patch-notes",
-        summary="Adjustments to Abrams, Bebop and Ivy win rates across ranked matches.",
     ),
     NewsItem(
         id=1,
@@ -36,6 +36,29 @@ _MOCK_NEWS: list[NewsItem] = [
 ]
 
 
+def _summary(content: str) -> str:
+    text = html.unescape(re.sub(r"<[^>]+>", " ", content))
+    text = " ".join(text.split())
+    return text if len(text) <= SUMMARY_CHARS else text[:SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
+
+
 @router.get("/api/news")
-def news() -> NewsResponse:
-    return NewsResponse(items=_MOCK_NEWS)
+async def news() -> NewsResponse:
+    try:
+        entries = await deadlock_client.fetch_patches()
+    except httpx.HTTPError:
+        entries = []
+    valve = [
+        NewsItem(
+            id=int(e["guid"]["text"].rsplit("/", 1)[-1]) % 2**31,
+            title=e["title"].strip(),
+            date=e["pub_date"][:10],
+            tag="patch-notes" if "update" in e["title"].lower() else "news",
+            summary=_summary(e["content"]),
+            url=e["link"],
+        )
+        for e in entries
+        if e["source"] == "steam"
+    ][:NEWS_COUNT]
+    items = sorted(valve + _SOULCURVE_NEWS, key=lambda n: n.date, reverse=True)
+    return NewsResponse(items=items)

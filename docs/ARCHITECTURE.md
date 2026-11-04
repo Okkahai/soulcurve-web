@@ -14,18 +14,16 @@
              JSON: win probability series + events
 ```
 
-## Current status (2026-09-28)
+## Current status (2026-11-04)
 
-Every endpoint below is implemented and live. Real deadlock-api.com data integration is well
-underway: hero/item stats, player match history/rank, and the leaderboard are all live now.
-Leaderboard identity (deadlock-api's own leaderboard gives ambiguous `possible_account_ids`
-for common names) is resolved via deadlock-api's `steam-search` endpoint, cross-checked
-against the leaderboard's own candidate list. Item builds remain mock — deadlock-api has no
-endpoint for them. Per-category player grades stay hybrid (real percentile, synthetic
-breakdown) since deadlock-api's role-stats endpoint is Patreon-only. Everything else still
-returns fixed/deterministic mock data — either static or seeded deterministically (e.g. by
-steam_id or rank) so it looks plausible and is stable across reloads, per `docs/DECISIONS.md`
-D2–D4 — pending further integration.
+Almost everything players see is live from deadlock-api.com: hero and item stats (windowed to the
+current gameplay patch, so a balance update shows up immediately), the patch summary (current vs.
+previous patch win rates), community builds, news/patch notes (Valve's Steam announcements), the
+leaderboard, player match history/rank, and the match map's minimap image and objective positions.
+Leaderboard identity is resolved via `steam-search`. Still mock: the win-probability model and the
+pages built on it (match analysis, net worth, kill positions), per-category player grades (the
+role-stats endpoint is Patreon-only), the rank distribution, tournaments and the model page.
+Mock data is deterministic (seeded by steam_id, match id or rank) per `docs/DECISIONS.md` D2-D4.
 
 ## API contract
 
@@ -34,7 +32,7 @@ D2–D4 — pending further integration.
 | `GET /health` | Liveness + API version |
 | `GET /api/matches/{match_id}/win-probability` | The match's win-probability time series |
 | `GET /api/matches/{match_id}/net-worth` | Per-team total souls over time, derived from the win-probability curve |
-| `GET /api/matches/{match_id}/map` | Kill positions and objective states on a schematic map (normalized 0–1 coords) |
+| `GET /api/matches/{match_id}/map` | Objective states and kill positions (normalized 0–1 coords). Objective positions and the minimap image are the game's real ones; kills are seeded mock data placed along the real lanes |
 | `GET /api/matches/{match_id}/analysis` | Per-player WPA-style mistake analysis (0–10 score + flagged moments) |
 | `GET /api/map/box-routes` | Breakable crate positions/timers and each team's optimal crate loop (exact shortest base-to-base order) vs. the greedy nearest-crate loop |
 | `GET /api/leaderboard` | Top-rated players — **live**, from deadlock-api's NAmerica leaderboard (name/rank real; win_rate/matches computed from real match history) |
@@ -42,17 +40,17 @@ D2–D4 — pending further integration.
 | `GET /api/players/{steam_id}/profile` | Skill rating/percentile (live, from deadlock-api's badge/rank) and per-category (Laning/Farming/Teamfighting/Objectives) letter grades + tendencies (still derived/mock — deadlock-api's role-stats endpoint is Patreon-only) |
 | `GET /api/stats/ranks` | The 12 Deadlock ranked tiers |
 | `GET /api/stats/heroes?rank=` | Hero win/pick rates, optionally filtered by rank — **live**, from deadlock-api |
-| `GET /api/stats/heroes/{hero_id}/items?rank=` | Item win/pick rates for a specific hero, optionally filtered by rank (hero identity live, item numbers still mock) |
-| `GET /api/stats/items` | Overall item win/pick rates (all heroes) |
-| `GET /api/stats/heroes/{hero_id}/builds` | Top-player item builds for a hero, ranked by win rate (hero identity live, builds still mock) |
-| `GET /api/stats/patch-summary` | Biggest hero win-rate winners/losers vs. the previous patch |
+| `GET /api/stats/heroes/{hero_id}/items?rank=` | Item win/pick rates for a specific hero over the current patch, optionally filtered by rank — **live** |
+| `GET /api/stats/items` | Overall item win/pick rates (all heroes), top 40 by pick rate — **live** |
+| `GET /api/stats/heroes/{hero_id}/builds?rank=` | Community builds for a hero, ranked by Wilson lower-bound win rate over the current patch — **live** |
+| `GET /api/stats/patch-summary` | Biggest hero win-rate winners/losers, current gameplay patch vs. the previous one — **live** |
 | `GET /api/stats/rank-distribution` | Share of players at each of the 12 ranked tiers |
 | `GET /api/model` | Model transparency: version, algorithm, metrics, input features (mock until M4) |
 | `GET /api/blog` | Blog post list (summaries, no body) |
 | `GET /api/blog/{slug}` | A single blog post, full body |
 | `GET /api/tournaments` | Tournament/league list (mock, fictional teams) |
 | `GET /api/tournaments/{slug}` | One tournament: standings derived from round-robin results, schedule |
-| `GET /api/news` | News / patch-notes feed |
+| `GET /api/news` | Valve's Steam announcements (live) plus SoulCurve's own news |
 | `GET /api/me`, `GET /auth/steam/login`, `POST /auth/logout` | Steam OpenID session |
 
 Example response (`win-probability`):
