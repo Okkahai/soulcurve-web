@@ -1,16 +1,15 @@
-"""General stats endpoints (hero/item win rates).
+"""General stats endpoints (hero/item win rates, patch summary, rank distribution).
 
-Hero stats are live from deadlock-api.com; item/build/patch stats are still
-mock data pending further integration.
+Hero, item and patch stats are live from deadlock-api.com, windowed to the
+current gameplay patch. Only the rank distribution is still mock data.
 """
 
 import asyncio
-import hashlib
 
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from soulcurve_api import deadlock_client
+from soulcurve_api import deadlock_client, patches
 from soulcurve_api.models import (
     HeroItemStatsResponse,
     HeroStat,
@@ -25,9 +24,9 @@ from soulcurve_api.models import (
 
 router = APIRouter()
 
-MOCK_PATCH = "mock-patch-1.0"
-PREVIOUS_MOCK_PATCH = "mock-patch-0.9"
 PATCH_SUMMARY_COUNT = 3
+MIN_PATCH_COMPARE_MATCHES = 1000  # per patch window, so a lucky streak can't top the winners
+ITEMS_OVERALL = 40
 
 # Deadlock's ranked tiers (api.deadlock-api.com/v1/assets/ranks), low to high.
 RANKS: list[str] = [
@@ -62,35 +61,10 @@ _MOCK_RANK_SHARES: list[float] = [
     0.01,
 ]
 
-_MOCK_HEROES: list[HeroStat] = [
-    HeroStat(hero_id=1, name="Abrams", win_rate=0.52, pick_rate=0.18, matches=9000),
-    HeroStat(hero_id=2, name="Bebop", win_rate=0.49, pick_rate=0.12, matches=6000),
-    HeroStat(hero_id=3, name="Dynamo", win_rate=0.55, pick_rate=0.21, matches=10500),
-    HeroStat(hero_id=4, name="Grey Talon", win_rate=0.47, pick_rate=0.15, matches=7500),
-    HeroStat(hero_id=5, name="Haze", win_rate=0.51, pick_rate=0.24, matches=12000),
-    HeroStat(hero_id=6, name="Infernus", win_rate=0.48, pick_rate=0.14, matches=7000),
-    HeroStat(hero_id=7, name="Ivy", win_rate=0.53, pick_rate=0.17, matches=8500),
-    HeroStat(hero_id=8, name="Vindicta", win_rate=0.46, pick_rate=0.11, matches=5500),
-]
 
-
-_MOCK_ITEMS: list[ItemStat] = [
-    ItemStat(item_id=200 + i, name=name, win_rate=win_rate, pick_rate=pick_rate, matches=matches)
-    for i, (name, win_rate, pick_rate, matches) in enumerate(
-        [
-            ("Extra Health", 0.54, 0.62, 31000),
-            ("Extra Stamina", 0.50, 0.41, 20500),
-            ("Extended Magazine", 0.49, 0.55, 27500),
-            ("Sprint Boots", 0.53, 0.38, 19000),
-            ("Melee Lifesteal", 0.47, 0.22, 11000),
-            ("Extra Regen", 0.51, 0.29, 14500),
-            ("Restorative Shot", 0.56, 0.19, 9500),
-            ("Mystic Shot", 0.45, 0.16, 8000),
-            ("Healing Rite", 0.52, 0.33, 16500),
-            ("Spirit Strike", 0.48, 0.14, 7000),
-        ]
-    )
-]
+async def _current_patch() -> tuple[str, int | None]:
+    pair = await patches.latest_patches()
+    return (pair[0].label, pair[0].start) if pair else ("All patches", None)
 
 
 def _badge_range(rank: str | None) -> tuple[int | None, int | None]:
@@ -114,8 +88,9 @@ async def hero_stats(rank: str | None = None) -> HeroStatsResponse:
     min_badge, max_badge = _badge_range(rank)
 
     try:
+        patch, since = await _current_patch()
         raw_stats, hero_names = await asyncio.gather(
-            deadlock_client.fetch_hero_stats(min_badge, max_badge),
+            deadlock_client.fetch_hero_stats(min_badge, max_badge, since),
             deadlock_client.fetch_heroes(),
         )
     except httpx.HTTPError as exc:
@@ -133,29 +108,49 @@ async def hero_stats(rank: str | None = None) -> HeroStatsResponse:
         for row in raw_stats
         if row["hero_id"] in hero_names and row["matches"] > 0
     ]
-    return HeroStatsResponse(patch=MOCK_PATCH, rank=rank, heroes=heroes)
+    return HeroStatsResponse(patch=patch, rank=rank, heroes=heroes)
 
 
 @router.get("/api/stats/patch-summary")
-def patch_summary() -> PatchSummaryResponse:
+async def patch_summary() -> PatchSummaryResponse:
+    pair = await patches.latest_patches()
+    if pair is None:
+        raise HTTPException(status_code=503, detail="Patch feed unavailable")
+    current, previous = pair
+    try:
+        now_rows, before_rows, hero_names = await asyncio.gather(
+            deadlock_client.fetch_hero_stats(since=current.start),
+            deadlock_client.fetch_hero_stats(since=previous.start, until=current.start),
+            deadlock_client.fetch_heroes(),
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="deadlock-api unavailable") from exc
+
+    before = {r["hero_id"]: r for r in before_rows if r["matches"] >= MIN_PATCH_COMPARE_MATCHES}
     changes = []
-    for hero in _MOCK_HEROES:
-        seed = int(hashlib.sha256(f"patch-delta:{hero.hero_id}".encode()).hexdigest(), 16)
-        delta = ((seed % 1200) - 600) / 10000  # +/-6pp
-        previous = round(min(0.75, max(0.25, hero.win_rate - delta)), 3)
+    for row in now_rows:
+        old = before.get(row["hero_id"])
+        if (
+            old is None
+            or row["hero_id"] not in hero_names
+            or row["matches"] < MIN_PATCH_COMPARE_MATCHES
+        ):
+            continue
+        win_rate = row["wins"] / row["matches"]
+        previous_win_rate = old["wins"] / old["matches"]
         changes.append(
             PatchChange(
-                hero_id=hero.hero_id,
-                name=hero.name,
-                win_rate=hero.win_rate,
-                previous_win_rate=previous,
-                delta=round(hero.win_rate - previous, 3),
+                hero_id=row["hero_id"],
+                name=hero_names[row["hero_id"]],
+                win_rate=round(win_rate, 3),
+                previous_win_rate=round(previous_win_rate, 3),
+                delta=round(win_rate - previous_win_rate, 3),
             )
         )
     ranked = sorted(changes, key=lambda c: c.delta, reverse=True)
     return PatchSummaryResponse(
-        patch=MOCK_PATCH,
-        previous_patch=PREVIOUS_MOCK_PATCH,
+        patch=current.label,
+        previous_patch=previous.label,
         winners=ranked[:PATCH_SUMMARY_COUNT],
         losers=ranked[-PATCH_SUMMARY_COUNT:][::-1],
     )
@@ -172,8 +167,31 @@ def rank_distribution() -> RankDistributionResponse:
 
 
 @router.get("/api/stats/items")
-def item_stats() -> ItemsResponse:
-    return ItemsResponse(patch=MOCK_PATCH, items=_MOCK_ITEMS)
+async def item_stats() -> ItemsResponse:
+    try:
+        patch, since = await _current_patch()
+        item_names, item_rows, hero_rows = await asyncio.gather(
+            deadlock_client.fetch_items(),
+            deadlock_client.fetch_item_stats(since=since),
+            deadlock_client.fetch_hero_stats(since=since),
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="deadlock-api unavailable") from exc
+
+    total_matches = sum(row["matches"] for row in hero_rows)
+    items = [
+        ItemStat(
+            item_id=row["item_id"],
+            name=item_names[row["item_id"]],
+            win_rate=round(row["wins"] / row["matches"], 3),
+            pick_rate=round(min(1.0, row["matches"] / total_matches), 3),
+            matches=row["matches"],
+        )
+        for row in item_rows
+        if row["item_id"] in item_names and row["matches"] > 0 and total_matches
+    ]
+    items.sort(key=lambda i: i.pick_rate, reverse=True)
+    return ItemsResponse(patch=patch, items=items[:ITEMS_OVERALL])
 
 
 ITEMS_PER_HERO = 12
@@ -187,11 +205,12 @@ async def hero_item_stats(hero_id: int, rank: str | None = None) -> HeroItemStat
     min_badge, max_badge = _badge_range(rank)
 
     try:
+        patch, since = await _current_patch()
         hero_names, item_names, item_rows, hero_rows = await asyncio.gather(
             deadlock_client.fetch_heroes(),
             deadlock_client.fetch_items(),
-            deadlock_client.fetch_item_stats(hero_id, min_badge, max_badge),
-            deadlock_client.fetch_hero_stats(min_badge, max_badge),
+            deadlock_client.fetch_item_stats(hero_id, min_badge, max_badge, since),
+            deadlock_client.fetch_hero_stats(min_badge, max_badge, since),
         )
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail="deadlock-api unavailable") from exc
@@ -214,7 +233,7 @@ async def hero_item_stats(hero_id: int, rank: str | None = None) -> HeroItemStat
     ]
     items.sort(key=lambda i: i.pick_rate, reverse=True)
     return HeroItemStatsResponse(
-        patch=MOCK_PATCH,
+        patch=patch,
         hero_id=hero_id,
         hero_name=hero_name,
         items=items[:ITEMS_PER_HERO],

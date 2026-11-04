@@ -70,7 +70,7 @@ function BuildsPage() {
       {builds.data && (
         <Section
           title={`${builds.data.hero_name} · Top Builds`}
-          description={`Win rate over the build's tracked games · patch ${builds.data.patch}`}
+          description={`Community builds ranked by confidence-adjusted win rate · patch ${builds.data.patch}`}
         >
           <ol className="flex flex-col divide-y">
             {builds.data.builds.map((build, i) => (
@@ -81,8 +81,10 @@ function BuildsPage() {
                 <div className="flex flex-col gap-2">
                   <span className="flex items-center gap-2 text-sm">
                     <span className="font-mono text-muted-foreground tabular-nums">#{i + 1}</span>
-                    <span className="font-medium">{build.author}</span>
-                    <span className="text-xs text-muted-foreground">{build.games} games</span>
+                    <span className="font-medium">{build.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      by {build.author} · {build.games.toLocaleString()} games
+                    </span>
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
                     {build.items.map((item) => (

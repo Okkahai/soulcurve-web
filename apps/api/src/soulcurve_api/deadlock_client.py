@@ -29,15 +29,34 @@ async def _get(path: str, params: dict, ttl_s: float) -> Any:
     return data
 
 
+def _filters(min_badge: int | None, max_badge: int | None, since: int | None, until: int | None):
+    """Analytics query params: average-badge range and a unix-time window, skipping unset ones."""
+    candidates = {
+        "min_average_badge": min_badge,
+        "max_average_badge": max_badge,
+        "min_unix_timestamp": since,
+        "max_unix_timestamp": until,
+    }
+    return {k: v for k, v in candidates.items() if v is not None}
+
+
 async def fetch_hero_stats(
-    min_badge: int | None = None, max_badge: int | None = None
+    min_badge: int | None = None,
+    max_badge: int | None = None,
+    since: int | None = None,
+    until: int | None = None,
 ) -> list[dict]:
-    params: dict = {}
-    if min_badge is not None:
-        params["min_average_badge"] = min_badge
-    if max_badge is not None:
-        params["max_average_badge"] = max_badge
+    params = _filters(min_badge, max_badge, since, until)
     return await _get("/v1/analytics/hero-stats", params, _HERO_STATS_TTL_S)
+
+
+async def fetch_map() -> dict:
+    """The game map: minimap image URLs and real objective positions."""
+    return await _get("/v1/assets/map", {}, _HEROES_TTL_S)
+
+
+async def fetch_patches() -> list[dict]:
+    return await _get("/v2/patches", {}, _HEROES_TTL_S)
 
 
 async def fetch_heroes() -> dict[int, str]:
@@ -63,14 +82,41 @@ async def fetch_rank(account_id: int) -> dict:
 
 
 async def fetch_item_stats(
-    hero_id: int, min_badge: int | None = None, max_badge: int | None = None
+    hero_id: int | None = None,
+    min_badge: int | None = None,
+    max_badge: int | None = None,
+    since: int | None = None,
 ) -> list[dict]:
-    params: dict = {"hero_id": hero_id}
-    if min_badge is not None:
-        params["min_average_badge"] = min_badge
-    if max_badge is not None:
-        params["max_average_badge"] = max_badge
+    """Item win/purchase counts; across all heroes when hero_id is omitted."""
+    params = _filters(min_badge, max_badge, since, None)
+    if hero_id is not None:
+        params["hero_id"] = hero_id
     return await _get("/v1/analytics/item-stats", params, _HERO_STATS_TTL_S)
+
+
+async def fetch_hero_build_stats(
+    hero_id: int,
+    min_badge: int | None,
+    max_badge: int | None,
+    since: int | None,
+    min_matches: int,
+) -> list[dict]:
+    params = _filters(min_badge, max_badge, since, None) | {"min_matches": min_matches}
+    return await _get(f"/v1/analytics/hero-build-stats/{hero_id}", params, _HERO_STATS_TTL_S)
+
+
+async def fetch_build(hero_id: int, build_id: int) -> dict | None:
+    """A community build's latest version (name, author, item mods), or None if it's gone."""
+    params = {"hero_id": hero_id, "build_id": build_id, "only_latest": "true", "limit": 1}
+    rows = await _get("/v1/builds", params, _HEROES_TTL_S)
+    return rows[0]["hero_build"] if rows else None
+
+
+async def fetch_steam_names(account_ids: list[int]) -> dict[int, str]:
+    rows = await _get(
+        "/v1/players/steam", {"account_ids": ",".join(map(str, account_ids))}, _HEROES_TTL_S
+    )
+    return {r["account_id"]: r["personaname"] for r in rows}
 
 
 async def fetch_leaderboard(region: str) -> list[dict]:

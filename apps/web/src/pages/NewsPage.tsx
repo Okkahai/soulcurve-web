@@ -111,7 +111,15 @@ function NewsPage() {
                 <Badge variant={item.tag === "patch-notes" ? "default" : "outline"}>{TAG_LABELS[item.tag]}</Badge>
               </div>
               <div className="flex flex-col gap-1.5">
-                <h2 className="text-lg font-medium text-balance">{item.title}</h2>
+                <h2 className="text-lg font-medium text-balance">
+                  {item.url ? (
+                    <a href={item.url} target="_blank" rel="noreferrer" className="hover:text-soul hover:underline">
+                      {item.title}
+                    </a>
+                  ) : (
+                    item.title
+                  )}
+                </h2>
                 <p className="text-sm text-pretty text-muted-foreground">{item.summary}</p>
               </div>
             </li>

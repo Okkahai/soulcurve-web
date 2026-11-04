@@ -158,6 +158,7 @@ export async function fetchHeroItemStats(heroId: number, rank?: string | null): 
 
 export interface Build {
   build_id: number;
+  name: string;
   author: string;
   items: string[];
   win_rate: number;
@@ -262,6 +263,7 @@ export interface NewsItem {
   date: string;
   tag: "patch-notes" | "news";
   summary: string;
+  url: string | null;
 }
 
 export interface NewsResponse {
@@ -379,6 +381,7 @@ export interface MapObjective {
 
 export interface MatchMapResponse {
   match_id: number;
+  minimap_url: string | null;
   kills: MapKill[];
   objectives: MapObjective[];
 }
